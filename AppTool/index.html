@@ -959,7 +959,7 @@ const PRODUCTS = {
   'Throttle': {
     name: 'Throttle',
     low: 2, high: 6,
-    reg: { greens: 5, tees: 5, fairways: 5 },
+    reg: { greens: 5, tees: 6, fairways: 6 },
     pricePerGal: 21.00,
     pricePerJug: 52.50,
     pricePerCase: 105.00
@@ -1343,14 +1343,24 @@ function bindEvents() {
   });
   areaInput.addEventListener('focus', e => e.target.select());
 
-  // Unit toggle
+ // Unit toggle
   document.querySelectorAll('.unit-btn').forEach(b => {
     b.addEventListener('click', () => {
       const newUnit = b.dataset.unit;
       if (newUnit === state.unit) return;
-      // convert the current value so the area stays the same on screen contextually:
-      // we PRESERVE the displayed number — i.e. flipping to ft² doesn't auto-convert,
-      // because reps usually re-type when they switch.
+      // Convert the number so the actual area stays the same.
+      // ft² -> acres: divide by 43,560. acres -> ft²: multiply.
+      if (state.unit === 'sqft' && newUnit === 'acres') {
+        state.area = state.area / SQFT_PER_ACRE;
+      } else if (state.unit === 'acres' && newUnit === 'sqft') {
+        state.area = state.area * SQFT_PER_ACRE;
+      }
+      // Round nicely so the displayed number doesn't have ugly decimals
+      if (newUnit === 'acres') {
+        state.area = Math.round(state.area * 100) / 100; // 2 decimals
+      } else {
+        state.area = Math.round(state.area); // whole ft²
+      }
       state.unit = newUnit;
       saveState();
       render();
