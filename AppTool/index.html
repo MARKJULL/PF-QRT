@@ -805,7 +805,7 @@ body {
   <!-- TURF TYPE -->
   <section class="card">
     <div class="card-step">Step 1</div>
-    <h2 class="card-title">Turf Type</h2>
+    <h2 class="card-title">Turf Area</h2>
     <div class="chip-row" id="turfChips">
       <button class="chip active" data-turf="greens">Greens</button>
       <button class="chip" data-turf="tees">Tees</button>
@@ -1089,7 +1089,16 @@ function calcRow(row) {
   const ozPerApp = rate * sqft / 1000;
   const galPerApp = ozPerApp / OZ_PER_GAL;
   const seasonGal = galPerApp * apps;
-  const jugsNeeded = Math.ceil(seasonGal / GAL_PER_JUG);
+  // Smart jug rounding: if the rate calls for ≤10% over a whole jug count,
+  // round DOWN to the whole jug. Anything more than 10% over rounds up.
+  // (e.g. 1.09 jugs -> 1 jug, but 1.11 jugs -> 2 jugs)
+  const rawJugs = seasonGal / GAL_PER_JUG;
+  const floorJugs = Math.floor(rawJugs);
+  const excess = rawJugs - floorJugs;
+  // Add a tiny epsilon so exactly 1.10 lands at the boundary correctly (floating-point safety)
+  const jugsNeeded = (excess <= 0.10 + 1e-9)
+    ? Math.max(1, floorJugs)   // never zero — if any product is in the program, ship at least 1 jug
+    : floorJugs + 1;
 
   // Pricing uses WHOLE JUGS — what the customer actually buys & gets invoiced for.
   // Per-jug price derives from the rep's current $/gal (default = list, can be raised).
