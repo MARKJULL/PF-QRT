@@ -188,13 +188,17 @@ body {
 }
 
 .card-step {
-  font-family: 'Roboto', sans-serif;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--green);
-  letter-spacing: 0.14em;
+  display: inline-block;
+  font-family: 'Oswald', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--white);
+  background: var(--green);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  margin-bottom: 4px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  margin-bottom: 8px;
 }
 .card-title {
   font-family: 'Oswald', sans-serif;
@@ -1012,6 +1016,7 @@ const state = {
   applications: 2,
   rows: [],                // [{ product, rate }]
   rep: { name: '', company: '', phone: '', email: '' },
+  customerName: '',        // last customer name entered for a PDF quote
   // Rep-set price overrides per product. Stored as $/gal.
   // Floor is the list price for that product; reps can raise above but never lower.
   priceOverrides: {}       // { 'The Core': 80, ... }
@@ -1045,6 +1050,7 @@ function loadState() {
     if (saved.unit) state.unit = saved.unit;
     if (typeof saved.applications === 'number') state.applications = saved.applications;
     if (saved.rep) Object.assign(state.rep, saved.rep);
+    if (typeof saved.customerName === 'string') state.customerName = saved.customerName;
     if (saved.priceOverrides && typeof saved.priceOverrides === 'object') {
       // Drop any override below the current list price (in case prices were raised in a release)
       for (const [name, val] of Object.entries(saved.priceOverrides)) {
@@ -1064,7 +1070,8 @@ function saveState() {
     unit: state.unit,
     applications: state.applications,
     rep: state.rep,
-    priceOverrides: state.priceOverrides
+    priceOverrides: state.priceOverrides,
+    customerName: state.customerName
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave)); } catch (e) { /* ignore */ }
 }
@@ -1089,15 +1096,13 @@ function calcRow(row) {
   const ozPerApp = rate * sqft / 1000;
   const galPerApp = ozPerApp / OZ_PER_GAL;
   const seasonGal = galPerApp * apps;
-  // Smart jug rounding: if the rate calls for ≤10% over a whole jug count,
-  // round DOWN to the whole jug. Anything more than 10% over rounds up.
-  // (e.g. 1.09 jugs -> 1 jug, but 1.11 jugs -> 2 jugs)
+  // Smart jug rounding: ≤10% over a whole jug count rounds DOWN; more rounds up.
+  // (1.09 jugs -> 1 jug, but 1.11 jugs -> 2 jugs)
   const rawJugs = seasonGal / GAL_PER_JUG;
   const floorJugs = Math.floor(rawJugs);
   const excess = rawJugs - floorJugs;
-  // Add a tiny epsilon so exactly 1.10 lands at the boundary correctly (floating-point safety)
   const jugsNeeded = (excess <= 0.10 + 1e-9)
-    ? Math.max(1, floorJugs)   // never zero — if any product is in the program, ship at least 1 jug
+    ? Math.max(1, floorJugs)
     : floorJugs + 1;
 
   // Pricing uses WHOLE JUGS — what the customer actually buys & gets invoiced for.
@@ -1352,23 +1357,21 @@ function bindEvents() {
   });
   areaInput.addEventListener('focus', e => e.target.select());
 
- // Unit toggle
+  // Unit toggle
   document.querySelectorAll('.unit-btn').forEach(b => {
     b.addEventListener('click', () => {
       const newUnit = b.dataset.unit;
       if (newUnit === state.unit) return;
       // Convert the number so the actual area stays the same.
-      // ft² -> acres: divide by 43,560. acres -> ft²: multiply.
       if (state.unit === 'sqft' && newUnit === 'acres') {
         state.area = state.area / SQFT_PER_ACRE;
       } else if (state.unit === 'acres' && newUnit === 'sqft') {
         state.area = state.area * SQFT_PER_ACRE;
       }
-      // Round nicely so the displayed number doesn't have ugly decimals
       if (newUnit === 'acres') {
-        state.area = Math.round(state.area * 100) / 100; // 2 decimals
+        state.area = Math.round(state.area * 100) / 100;
       } else {
-        state.area = Math.round(state.area); // whole ft²
+        state.area = Math.round(state.area);
       }
       state.unit = newUnit;
       saveState();
@@ -1564,6 +1567,23 @@ function buildPDF() {
 
   y = 130;
 
+  // SECTION: Prepared For (customer name) — only if entered
+  if (state.customerName) {
+    doc.setTextColor(44, 44, 44);
+    doc.setFont('helvetica', 'bolditalic');
+    doc.setFontSize(14);
+    doc.text('PREPARED FOR', M, y);
+    y += 8;
+    doc.setDrawColor(221, 221, 221);
+    doc.line(M, y, W - M, y);
+    y += 22;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(44, 44, 44);
+    doc.text(state.customerName, M, y);
+    y += 28;
+  }
+
   // SECTION: Program Summary
   doc.setTextColor(44, 44, 44);
   doc.setFont('helvetica', 'bolditalic');
@@ -1750,10 +1770,18 @@ function formatNumber(n, decimals = 0) {
 }
 
 async function sharePDF() {
+  // Prompt for the customer/course name (optional). Pre-fill with last entered.
+  const entered = window.prompt('Customer or course name (optional):', state.customerName || '');
+  if (entered === null) return; // Cancel aborts the share
+  state.customerName = entered.trim();
+
   const doc = buildPDF();
   const turfLabel = state.turf.charAt(0).toUpperCase() + state.turf.slice(1);
   const dateStamp = new Date().toISOString().slice(0, 10);
-  const filename = `Plant-Fitness-Quote_${turfLabel}_${dateStamp}.pdf`;
+  const customerSlug = state.customerName
+    ? '_' + state.customerName.replace(/[^a-zA-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+    : '';
+  const filename = `Plant-Fitness-Quote${customerSlug}_${turfLabel}_${dateStamp}.pdf`;
 
   // Try Web Share API with a File (best mobile experience — opens native share sheet)
   try {
